@@ -4,10 +4,12 @@ using Transformers
 using Transformers.TextEncoders
 using Transformers.HuggingFace
 using LinearAlgebra
+using Metal
+using BenchmarkTools
 
 textencoder, bert_model = hgf"bert-base-uncased"
 
-function compute_max_sim(query, document)
+function compute_max_sim(query, document, use_gpu::Bool=false)
     """
     Compute the maximum similarity between a query and a document.
     Complexity: O(n * m), where n is the number of tokens in the query and m is the number of tokens in the document.
@@ -40,8 +42,17 @@ function compute_max_sim(query, document)
         document_embedding[:, i] = document_embedding[:, i] / norm(document_embedding[:, i])
     end
 
-    similarity_score_matrix = zeros(Float64, num_query_tokens, num_document_tokens)
-    mul!(similarity_score_matrix, query_embedding', document_embedding)
+    similarity_score_matrix = zeros(Float32, num_query_tokens, num_document_tokens)
+
+    if use_gpu
+        d_query_embedding_T = MtlArray(query_embedding')
+        d_document_embedding = MtlArray(document_embedding)
+        d_similarity_score_matrix = MtlArray(similarity_score_matrix)
+        bench = @benchmark Metal.@sync mul!(d_similarity_score_matrix, d_query_embedding_T, d_document_embedding)
+        similarity_score_matrix = Array(d_similarity_score_matrix)
+    else
+        mul!(similarity_score_matrix, query_embedding', document_embedding)
+    end
 
     max_sim = 0
     for i in 1:num_query_tokens
@@ -52,6 +63,7 @@ function compute_max_sim(query, document)
         end
         max_sim += max_sim_per_query_token
     end
+
     return max_sim
 end
 
